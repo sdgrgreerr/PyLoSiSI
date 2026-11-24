@@ -1,106 +1,39 @@
 # PyLoSiSi
 
-**PyLoSiSi** — реализация протокола узкополосного аудиомодема **LoSiSi** (*Low-Signal Simple Interface*) на языке Python. Протокол предназначен для надежной передачи коротких текстовых сообщений и радиолюбительских QSO-пакетов в условиях слабого сигнала и высокого уровня шумов.
+**PyLoSiSi** is a Python implementation of the narrowband **LoSiSi** (*Low-Signal Simple Interface*) audio modem protocol for weak-signal and high-noise amateur radio communication.
 
-## Особенности протокола
+## What's New in v0.1.1
 
-* **Модуляция:** CPFSK (непрерывная по фазе многочастотная манипуляция, 64 тона).
-* **Параметры сигнала:** частота дискретизации `8000 Гц`, длительность символа `0.8 с`, ортогональный разнос частот `1.25 Гц` (общая полоса сигнала ~80 Гц).
-* **Структура пакета:** 15 символов синхропреамбулы + 16 символов кадра (общая длительность передачи `24.8 с`).
-* **Формат QSO-кадра (16 символов):**
-  * `5 символов` — позывной получателя (`target`)
-  * `5 символов` — позывной отправителя (`sender`)
-  * `4 символа` — полезная нагрузка / локатор / рапорт (`meta`)
-  * `2 символа` — контрольная сумма CRC
+- **Forward Error Correction (FEC):** Reed-Solomon over GF(2⁶) with configurable `fec_level` (0–8), recovering up to 8 corrupted symbols per packet.
+- **Dynamic Packet Duration:** Frame length scales dynamically based on parity symbols (from 24.8s up to 37.6s).
+- **Enhanced Receiver Buffer:** Extended ring buffer capacity to 45s for real-time decoding at high FEC levels.
+- **FT8-Style GUI Terminal:** Added a Tkinter transceiver application with live waterfall spectrum (500–2500 Hz), dual-pane logs, macros, and offline WAV tools.
 
-## Установка
+## Protocol & Installation
 
-Базовая установка (генерация и декодирование WAV-файлов и массивов `numpy`):
+- **Modulation:** CPFSK (64 tones), 8000 Hz sample rate, 0.8s symbol duration, 1.25 Hz tone spacing (~80 Hz bandwidth).
+- **Installation:** 
+  ```bash
+  pip install pylosisi              # Core / WAV / NumPy
+  pip install "pylosisi[stream]"    # Real-time soundcard streaming
+  pip install matplotlib numpy      # GUI terminal support
+  ```
 
-```bash
-pip install pylosisi
-```
+## Usage Examples
 
-Установка с поддержкой работы в реальном времени через звуковую карту (`sounddevice`):
-
-```bash
-pip install "pylosisi[stream]"
-```
-
-## Примеры использования
-
-### 1. Запись и чтение WAV-файлов (Офлайн-режим)
-
+### Offline WAV Processing
 ```python
 from pylosisi import LoSiSiOfflineEncoder, LoSiSiOfflineDecoder
 
-# Генерация WAV-файла (16-бит, моно, 8000 Гц)
-encoder = LoSiSiOfflineEncoder(base_freq=1000.0)
-encoder.encode_to_wav(
-    filename="qso_message.wav",
-    sender="R1ABC",
-    target="CQ",
-    meta="KO59"
-)
+encoder = LoSiSiOfflineEncoder(base_freq=1000.0, fec_level=2)
+encoder.encode_to_wav("qso_message.wav", sender="R1ABC", target="CQ", meta="KO59")
 
-# Декодирование из WAV-файла (автопоиск сигнала в полосе 500–2500 Гц)
-decoder = LoSiSiOfflineDecoder(search_min_hz=500.0, search_max_hz=2500.0)
-packets = decoder.decode_wav("qso_message.wav")
-
-for pkt in packets:
-    print(f"Принято: '{pkt['text']}' | Частота: {pkt['freq_hz']} Гц | CRC: {pkt['crc_ok']}")
+decoder = LoSiSiOfflineDecoder(search_min_hz=500.0, search_max_hz=2500.0, fec_level=2)
+for pkt in decoder.decode_wav("qso_message.wav"):
+    print(f"Received: '{pkt['text']}' | Freq: {pkt['freq_hz']} Hz | CRC: {pkt['crc_ok']}")
 ```
 
-### 2. Тестирование с добавлением шума (AWGN)
+*(For complete usage details, AWGN noise testing, streaming examples, and package architecture, please refer to the source repository at [https://github.com/sdgrgreerr/PyLoSiSI](https://github.com/sdgrgreerr/PyLoSiSI)).*
 
-```python
-from pylosisi import LoSiSiOfflineEncoder, LoSiSiOfflineDecoder
-
-encoder = LoSiSiOfflineEncoder(base_freq=1200.0)
-decoder = LoSiSiOfflineDecoder()
-
-# Генерация сигнала с отношением сигнал/шум -10 дБ
-noisy_audio = encoder.encode_to_array(
-    sender="UA1AA",
-    target="R1ABC",
-    meta="-10D",
-    snr_db=-10.0
-)
-
-results = decoder.decode_array(noisy_audio)
-print(results)
-```
-
-### 3. Передача и прием в реальном времени (Звуковая карта)
-
-*(Требуется установка `pip install "pylosisi[stream]"`)*
-
-```python
-import time
-from pylosisi import LoSiSiStreamTransmitter, LoSiSiStreamReceiver
-
-# Коллбэк при успешном приеме пакета
-def on_packet(packet):
-    print(f"\n[ЭФИР] Принят пакет: {packet['text']} (базовая частота {packet['freq_hz']} Гц)")
-
-# Запуск приемника в фоновом потоке
-rx = LoSiSiStreamReceiver(on_receive_callback=on_packet, search_min_hz=500.0, search_max_hz=2500.0)
-rx.start()
-
-# Передача сообщения
-tx = LoSiSiStreamTransmitter(base_freq=1000.0)
-tx.transmit_qso(sender="R1ABC", target="CQ", meta="73!", blocking=True)
-
-# Даем приемнику пару секунд на завершение обработки буфера
-time.sleep(3)
-rx.stop()
-```
-
-## Архитектура пакета
-
-* `pylosisi.modem.PyLoSiSi` — математическое ядро: генерация преамбулы, модуляция CPFSK, скользящий БПФ-демодулятор, расчет CRC и симуляция канала с шумом.
-* `pylosisi.io` — высокоуровневые обертки для работы с WAV (`LoSiSiOfflineEncoder`, `LoSiSiOfflineDecoder`) и потоковым аудио (`LoSiSiStreamTransmitter`, `LoSiSiStreamReceiver`).
-
-## Лицензия
-
-Проект распространяется под лицензией **MIT**. Подробности приведены в файле [LICENSE](LICENSE).
+## License
+MIT License.
